@@ -39,9 +39,7 @@ def send_one(item):
         acct = GMAIL_ACCOUNTS[idx]
         msg  = build_msg(item, acct["email"])
         try:
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as conn:
-                conn.ehlo("deepshah.tech")
-                conn.starttls()
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as conn:
                 conn.ehlo("deepshah.tech")
                 conn.login(acct["email"], acct["app_pass"])
                 conn.send_message(msg)
