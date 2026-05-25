@@ -62,7 +62,7 @@ def main():
     n     = len(queue)
     start = time.time()
     sent  = failed = 0
-    print(f"🚀 Railway sender — {n} emails")
+    print(f"🚀 Render sender — {n} emails")
     print(f"⏰ Started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'─'*60}")
     for i, item in enumerate(queue):
