@@ -15,6 +15,29 @@ PRIMARY_REPLY_TO   = "deep@deepshah.tech"
 PRIMARY_REPLY_NAME = "Deep Shah"
 FROM_NAME          = "Deep Shah"
 
+# ── Idempotency: track every email address we have already sent to ────────────
+SENT_LOG_PATH = "sent_log.json"
+
+def _load_sent_log() -> set:
+    """Load the set of already-sent email addresses from disk."""
+    if os.path.exists(SENT_LOG_PATH):
+        try:
+            with open(SENT_LOG_PATH) as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+def _mark_sent(email: str, sent_set: set) -> None:
+    """Append email to the in-memory set AND persist to disk immediately."""
+    sent_set.add(email)
+    try:
+        with open(SENT_LOG_PATH, "w") as f:
+            json.dump(list(sent_set), f, indent=2)
+    except Exception as e:
+        print(f"  ⚠️  Could not write sent_log: {e}")
+# ─────────────────────────────────────────────────────────────────────────────
+
 def build_msg(item, from_email):
     domain = from_email.split("@")[1]
     msg = MIMEMultipart("mixed")
@@ -59,12 +82,24 @@ def send_one(item):
 def main():
     with open("send_queue.json") as f:
         queue = json.load(f)
+
+    # ── Load sent log ONCE at startup ─────────────────────────────────────────
+    already_sent = _load_sent_log()
+    skipped      = [item for item in queue if item["to_email"] in already_sent]
+    queue        = [item for item in queue if item["to_email"] not in already_sent]
+    # ─────────────────────────────────────────────────────────────────────────
+
     n     = len(queue)
     start = time.time()
     sent  = failed = 0
-    print(f"🚀 Render sender — {n} emails")
+
+    print(f"🚀 Render sender — {n} emails to send  ({len(skipped)} already sent, skipping)")
+    if skipped:
+        for s in skipped:
+            print(f"  ⏭️  Already sent — skipping {s['to_email']} ({s['cname']})")
     print(f"⏰ Started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'─'*60}")
+
     for i, item in enumerate(queue):
         send_at = start + item["send_offset_sec"]
         wait    = send_at - time.time()
@@ -73,10 +108,16 @@ def main():
             print(f"  ⏳ [{i+1}/{n}] waiting {wait:.0f}s  finish ~{eta}", end="\r", flush=True)
             time.sleep(wait)
         ok = send_one(item)
-        if ok: sent += 1
-        else:  failed += 1
+        if ok:
+            sent += 1
+            # ── Persist immediately so redeploys can't re-send ────────────────
+            _mark_sent(item["to_email"], already_sent)
+            # ─────────────────────────────────────────────────────────────────
+        else:
+            failed += 1
+
     print(f"\n{'─'*60}")
-    print(f"✅ Complete — {sent} sent  {failed} failed")
+    print(f"✅ Complete — {sent} sent  {failed} failed  {len(skipped)} skipped (already sent)")
     print(f"⏰ Finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 if __name__ == "__main__":
