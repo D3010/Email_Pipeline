@@ -1,4 +1,4 @@
-import json, time, smtplib, os, uuid
+import json, time, smtplib, os, uuid, urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text      import MIMEText
 from email.utils          import formataddr
@@ -14,12 +14,13 @@ GMAIL_ACCOUNTS = [a for a in GMAIL_ACCOUNTS if a["email"] and a["app_pass"]]
 PRIMARY_REPLY_TO   = "deep@deepshah.tech"
 PRIMARY_REPLY_NAME = "Deep Shah"
 FROM_NAME          = "Deep Shah"
+RENDER_API_KEY     = os.environ.get("RENDER_API_KEY", "")
+RENDER_SERVICE_ID  = os.environ.get("RENDER_SERVICE_ID", "")
 
-# ── Idempotency: track every email address we have already sent to ────────────
+# ── Idempotency: track every email address already sent ──────────────────────
 SENT_LOG_PATH = "sent_log.json"
 
 def _load_sent_log() -> set:
-    """Load the set of already-sent email addresses from disk."""
     if os.path.exists(SENT_LOG_PATH):
         try:
             with open(SENT_LOG_PATH) as f:
@@ -29,14 +30,29 @@ def _load_sent_log() -> set:
     return set()
 
 def _mark_sent(email: str, sent_set: set) -> None:
-    """Append email to the in-memory set AND persist to disk immediately."""
     sent_set.add(email)
     try:
         with open(SENT_LOG_PATH, "w") as f:
             json.dump(list(sent_set), f, indent=2)
     except Exception as e:
         print(f"  ⚠️  Could not write sent_log: {e}")
-# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Self-suspend via Render API ───────────────────────────────────────────────
+def suspend_self():
+    if not RENDER_API_KEY or not RENDER_SERVICE_ID:
+        print("  ⚠️  RENDER_API_KEY or RENDER_SERVICE_ID missing — suspend manually!")
+        return
+    try:
+        url     = f"https://api.render.com/v1/services/{RENDER_SERVICE_ID}/suspend"
+        headers = {
+            "Authorization": f"Bearer {RENDER_API_KEY}",
+            "Content-Type":  "application/json",
+        }
+        req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+        urllib.request.urlopen(req)
+        print(f"  ✅ Worker self-suspended via Render API — safe to leave ✅")
+    except Exception as e:
+        print(f"  ⚠️  Self-suspend failed: {e} — suspend manually on dashboard!")
 
 def build_msg(item, from_email):
     domain = from_email.split("@")[1]
@@ -83,11 +99,11 @@ def main():
     with open("send_queue.json") as f:
         queue = json.load(f)
 
-    # ── Load sent log ONCE at startup ─────────────────────────────────────────
+    # ── Load sent log — skip anyone already emailed ───────────────────────
     already_sent = _load_sent_log()
     skipped      = [item for item in queue if item["to_email"] in already_sent]
     queue        = [item for item in queue if item["to_email"] not in already_sent]
-    # ─────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────
 
     n     = len(queue)
     start = time.time()
@@ -110,15 +126,16 @@ def main():
         ok = send_one(item)
         if ok:
             sent += 1
-            # ── Persist immediately so redeploys can't re-send ────────────────
             _mark_sent(item["to_email"], already_sent)
-            # ─────────────────────────────────────────────────────────────────
         else:
             failed += 1
 
     print(f"\n{'─'*60}")
     print(f"✅ Complete — {sent} sent  {failed} failed  {len(skipped)} skipped (already sent)")
     print(f"⏰ Finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # ── Self-suspend so Render never restarts and re-sends ────────────────
+    suspend_self()
 
 if __name__ == "__main__":
     main()
