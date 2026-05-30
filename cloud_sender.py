@@ -8,6 +8,7 @@ GMAIL_ACCOUNTS = [
     {"email": os.environ.get("GMAIL_1_EMAIL",""), "app_pass": os.environ.get("GMAIL_1_PASS","")},
     {"email": os.environ.get("GMAIL_2_EMAIL",""), "app_pass": os.environ.get("GMAIL_2_PASS","")},
     {"email": os.environ.get("GMAIL_3_EMAIL",""), "app_pass": os.environ.get("GMAIL_3_PASS","")},
+    {"email": os.environ.get("GMAIL_4_EMAIL",""), "app_pass": os.environ.get("GMAIL_4_PASS","")},
 ]
 GMAIL_ACCOUNTS = [a for a in GMAIL_ACCOUNTS if a["email"] and a["app_pass"]]
 
