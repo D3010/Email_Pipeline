@@ -3,12 +3,13 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text      import MIMEText
 from email.utils          import formataddr
 
+# daily_limit read from Render env vars — set GMAIL_0_LIMIT=40 etc. in dashboard
 GMAIL_ACCOUNTS = [
-    {"email": os.environ.get("GMAIL_0_EMAIL",""), "app_pass": os.environ.get("GMAIL_0_PASS","")},
-    {"email": os.environ.get("GMAIL_1_EMAIL",""), "app_pass": os.environ.get("GMAIL_1_PASS","")},
-    {"email": os.environ.get("GMAIL_2_EMAIL",""), "app_pass": os.environ.get("GMAIL_2_PASS","")},
-    {"email": os.environ.get("GMAIL_3_EMAIL",""), "app_pass": os.environ.get("GMAIL_3_PASS","")},
-    {"email": os.environ.get("GMAIL_4_EMAIL",""), "app_pass": os.environ.get("GMAIL_4_PASS","")},
+    {"email": os.environ.get("GMAIL_0_EMAIL",""), "app_pass": os.environ.get("GMAIL_0_PASS",""), "daily_limit": int(os.environ.get("GMAIL_0_LIMIT","9999"))},
+    {"email": os.environ.get("GMAIL_1_EMAIL",""), "app_pass": os.environ.get("GMAIL_1_PASS",""), "daily_limit": int(os.environ.get("GMAIL_1_LIMIT","9999"))},
+    {"email": os.environ.get("GMAIL_2_EMAIL",""), "app_pass": os.environ.get("GMAIL_2_PASS",""), "daily_limit": int(os.environ.get("GMAIL_2_LIMIT","9999"))},
+    {"email": os.environ.get("GMAIL_3_EMAIL",""), "app_pass": os.environ.get("GMAIL_3_PASS",""), "daily_limit": int(os.environ.get("GMAIL_3_LIMIT","9999"))},
+    {"email": os.environ.get("GMAIL_4_EMAIL",""), "app_pass": os.environ.get("GMAIL_4_PASS",""), "daily_limit": int(os.environ.get("GMAIL_4_LIMIT","9999"))},
 ]
 GMAIL_ACCOUNTS = [a for a in GMAIL_ACCOUNTS if a["email"] and a["app_pass"]]
 
@@ -18,7 +19,6 @@ FROM_NAME          = "Deep Shah"
 RENDER_API_KEY     = os.environ.get("RENDER_API_KEY", "")
 RENDER_SERVICE_ID  = os.environ.get("RENDER_SERVICE_ID", "")
 
-# ── Idempotency: track every email address already sent ──────────────────────
 SENT_LOG_PATH = "sent_log.json"
 
 def _load_sent_log() -> set:
@@ -38,7 +38,6 @@ def _mark_sent(email: str, sent_set: set) -> None:
     except Exception as e:
         print(f"  ⚠️  Could not write sent_log: {e}")
 
-# ── Self-suspend via Render API ───────────────────────────────────────────────
 def suspend_self():
     if not RENDER_API_KEY or not RENDER_SERVICE_ID:
         print("  ⚠️  RENDER_API_KEY or RENDER_SERVICE_ID missing — suspend manually!")
@@ -72,17 +71,22 @@ def build_msg(item, from_email):
     msg.attach(alt)
     return msg
 
-def send_one(item):
+def send_one(item, sent_counts: dict):
     n     = len(GMAIL_ACCOUNTS)
     order = [(item["acct_idx"] + i) % n for i in range(n)]
     for idx in order:
-        acct = GMAIL_ACCOUNTS[idx]
-        msg  = build_msg(item, acct["email"])
+        acct  = GMAIL_ACCOUNTS[idx]
+        limit = acct.get("daily_limit", 9999)
+        if sent_counts.get(acct["email"], 0) >= limit:
+            print(f"  ⏭️  {acct['email']} at daily cap ({limit}) — skipping")
+            continue
+        msg = build_msg(item, acct["email"])
         try:
             with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as conn:
                 conn.ehlo("deepshah.tech")
                 conn.login(acct["email"], acct["app_pass"])
                 conn.send_message(msg)
+            sent_counts[acct["email"]] = sent_counts.get(acct["email"], 0) + 1
             ts = time.strftime("%H:%M:%S")
             print(f"  ✅ [{ts}] T{item.get('template_id','?')} "
                   f"{item['cname']:<24} -> {item['to_email']} via {acct['email']}")
@@ -93,22 +97,21 @@ def send_one(item):
         except Exception as e:
             print(f"  ⚠️  {acct['email']} failed ({e}) — trying next")
             continue
-    print(f"  ❌ ALL FAILED: {item['to_email']}")
+    print(f"  ❌ ALL FAILED OR AT CAP: {item['to_email']}")
     return False
 
 def main():
     with open("send_queue.json") as f:
         queue = json.load(f)
 
-    # ── Load sent log — skip anyone already emailed ───────────────────────
     already_sent = _load_sent_log()
     skipped      = [item for item in queue if item["to_email"] in already_sent]
     queue        = [item for item in queue if item["to_email"] not in already_sent]
-    # ─────────────────────────────────────────────────────────────────────
 
-    n     = len(queue)
-    start = time.time()
-    sent  = failed = 0
+    n           = len(queue)
+    start       = time.time()
+    sent        = failed = 0
+    sent_counts = {}   # per-account counter — enforces daily_limit at Render runtime
 
     print(f"🚀 Render sender — {n} emails to send  ({len(skipped)} already sent, skipping)")
     if skipped:
@@ -124,7 +127,7 @@ def main():
             eta = time.strftime("%H:%M", time.localtime(start + queue[-1]["send_offset_sec"]))
             print(f"  ⏳ [{i+1}/{n}] waiting {wait:.0f}s  finish ~{eta}", end="\r", flush=True)
             time.sleep(wait)
-        ok = send_one(item)
+        ok = send_one(item, sent_counts)
         if ok:
             sent += 1
             _mark_sent(item["to_email"], already_sent)
@@ -134,8 +137,6 @@ def main():
     print(f"\n{'─'*60}")
     print(f"✅ Complete — {sent} sent  {failed} failed  {len(skipped)} skipped (already sent)")
     print(f"⏰ Finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-
-    # ── Self-suspend so Render never restarts and re-sends ────────────────
     suspend_self()
 
 if __name__ == "__main__":
