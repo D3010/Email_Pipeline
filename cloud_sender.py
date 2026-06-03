@@ -3,7 +3,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text      import MIMEText
 from email.utils          import formataddr
 
-# daily_limit read from Render env vars — set GMAIL_0_LIMIT=40 etc. in dashboard
 GMAIL_ACCOUNTS = [
     {"email": os.environ.get("GMAIL_0_EMAIL",""), "app_pass": os.environ.get("GMAIL_0_PASS",""), "daily_limit": int(os.environ.get("GMAIL_0_LIMIT","9999"))},
     {"email": os.environ.get("GMAIL_1_EMAIL",""), "app_pass": os.environ.get("GMAIL_1_PASS",""), "daily_limit": int(os.environ.get("GMAIL_1_LIMIT","9999"))},
@@ -111,7 +110,7 @@ def main():
     n           = len(queue)
     start       = time.time()
     sent        = failed = 0
-    sent_counts = {}   # per-account counter — enforces daily_limit at Render runtime
+    sent_counts = {}
 
     print(f"🚀 Render sender — {n} emails to send  ({len(skipped)} already sent, skipping)")
     if skipped:
@@ -125,7 +124,7 @@ def main():
         wait    = send_at - time.time()
         if wait > 0:
             eta = time.strftime("%H:%M", time.localtime(start + queue[-1]["send_offset_sec"]))
-            print(f"  ⏳ [{i+1}/{n}] waiting {wait:.0f}s  finish ~{eta}", end="\r", flush=True)
+            print(f"  ⏳ [{i+1}/{n}] waiting {wait:.0f}s  finish ~{eta}", end="\\r", flush=True)
             time.sleep(wait)
         ok = send_one(item, sent_counts)
         if ok:
@@ -134,7 +133,7 @@ def main():
         else:
             failed += 1
 
-    print(f"\n{'─'*60}")
+    print(f"\\n{'─'*60}")
     print(f"✅ Complete — {sent} sent  {failed} failed  {len(skipped)} skipped (already sent)")
     print(f"⏰ Finished: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     suspend_self()
