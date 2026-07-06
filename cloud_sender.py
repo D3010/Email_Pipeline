@@ -1,6 +1,7 @@
 import json, time, smtplib, os, uuid, urllib.request
 from email.mime.multipart import MIMEMultipart
 from email.mime.text      import MIMEText
+from email.mime.application import MIMEApplication
 from email.utils          import formataddr
 
 GMAIL_ACCOUNTS = [
@@ -19,6 +20,14 @@ RENDER_API_KEY     = os.environ.get("RENDER_API_KEY", "")
 RENDER_SERVICE_ID  = os.environ.get("RENDER_SERVICE_ID", "")
 
 SENT_LOG_PATH = "sent_log.json"
+
+RESUME_PDF_PATH        = "resume.pdf"
+RESUME_ATTACHMENT_NAME = "Deep_Shah_Resume.pdf"
+try:
+    with open(RESUME_PDF_PATH, "rb") as f:
+        RESUME_PDF_BYTES = f.read()
+except FileNotFoundError:
+    RESUME_PDF_BYTES = None
 
 def _load_sent_log() -> set:
     if os.path.exists(SENT_LOG_PATH):
@@ -68,6 +77,11 @@ def build_msg(item, from_email):
     alt.attach(MIMEText(item["plain"], "plain", "utf-8"))
     alt.attach(MIMEText(item["html"],  "html",  "utf-8"))
     msg.attach(alt)
+    if RESUME_PDF_BYTES:
+        part = MIMEApplication(RESUME_PDF_BYTES, _subtype="pdf")
+        part.add_header("Content-Disposition", "attachment",
+                        filename=RESUME_ATTACHMENT_NAME)
+        msg.attach(part)
     return msg
 
 def send_one(item, sent_counts: dict):
@@ -100,6 +114,12 @@ def send_one(item, sent_counts: dict):
     return False
 
 def main():
+    if RESUME_PDF_BYTES is None:
+        print("❌ resume.pdf not found in deploy — aborting so no email goes out without the promised attachment.")
+        print("   Re-run Cell 10 (it exports and pushes resume.pdf), then let Render redeploy.")
+        suspend_self()
+        return
+
     with open("send_queue.json") as f:
         queue = json.load(f)
 
@@ -113,6 +133,7 @@ def main():
     sent_counts = {}
 
     print(f"🚀 Render sender — {n} emails to send  ({len(skipped)} already sent, skipping)")
+    print(f"📎 Attaching {RESUME_ATTACHMENT_NAME} ({len(RESUME_PDF_BYTES)//1024} KB) to every email")
     if skipped:
         for s in skipped:
             print(f"  ⏭️  Already sent — skipping {s['to_email']} ({s['cname']})")
